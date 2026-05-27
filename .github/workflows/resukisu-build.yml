@@ -36,7 +36,7 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/gyabii/ReSukiSU/refs/heads/main/kernel/setup.sh" | bash -s main
 
           # Integrate SuSFS
-          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
+          git clone --depth=1 https://gitlab.com/gyabi/susfs4ksu.git -b gki-android13-5.15
 
           SUSFS_KERNEL_PATCH="susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch"
           patch -p1 < "$SUSFS_KERNEL_PATCH"
