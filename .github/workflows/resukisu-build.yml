@@ -33,7 +33,7 @@ jobs:
           echo "KERNEL_VERSION=$(grep -m1 '^SUBLEVEL =' ./Makefile | awk '{print $3}')" >> $GITHUB_ENV
 
           # Integrate ReSukiSU
-          curl -LSs "https://raw.githubusercontent.com/gyabii/ReSukiSU/refs/heads/main/kernel/setup.sh" | bash -s main
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/refs/heads/main/kernel/setup.sh" | bash -s main
 
           # Integrate SuSFS
           git clone --depth=1 https://gitlab.com/gyabi/susfs4ksu.git -b gki-android13-5.15
