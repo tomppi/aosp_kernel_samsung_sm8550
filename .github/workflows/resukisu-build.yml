@@ -60,7 +60,7 @@ jobs:
           # Clean up SUSFS repo (we only needed kernel patches, not KSU integration)
           rm -rf susfs4ksu
 
-          CONFIG_FILE=arch/arm64/configs/dm1q_defconfig
+          CONFIG_FILE=arch/arm64/configs/q5q_defconfig
           cat >> "$CONFIG_FILE" << 'EOF'
           CONFIG_KSU=y
           CONFIG_KSU_SUSFS=y
