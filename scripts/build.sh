@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # (env-overridable)
-KERNEL_DEFCONFIG=${KERNEL_DEFCONFIG:-dm1q_defconfig}
+KERNEL_DEFCONFIG=${KERNEL_DEFCONFIG:-q5q_defconfig}
 CLANG_VERSION=${CLANG_VERSION:-clang-r584948b}
 OUT_DIR=${OUT_DIR:-out}
 CLANG_DIR=${CLANG_DIR:-"$HOME/tools/google-clang"}
