@@ -1,67 +1,108 @@
-# build.yml kanged from Rezoss Reza modified to build kernel with ReSukiSU, KPM and SuSFS using the main branch
-name: Build kernel (ReSukiSU, KPM, SuSFS, `main` branch)
+name: Build Fold5 q5q kernel (ReSukiSU + KPM + SuSFS)
+
 on:
   workflow_dispatch:
+    inputs:
+      defconfig:
+        description: "Kernel defconfig to build"
+        required: true
+        default: "q5q_defconfig"
+      resukisu_branch:
+        description: "ReSukiSU branch"
+        required: true
+        default: "main"
+      susfs_branch:
+        description: "susfs4ksu branch"
+        required: true
+        default: "gki-android13-5.15"
+      package_anykernel:
+        description: "Package Image.gz into AnyKernel zip"
+        type: boolean
+        required: true
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  KERNEL_DEFCONFIG: ${{ inputs.defconfig }}
+  CLANG_VERSION: clang-r584948b
+  OUT_DIR: out
+  ANYKERNEL_URL: https://github.com/gyabii/kernel_samsung_sm8550-common/releases/download/anykernel/anykernel.zip
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout the repository
+      - name: Checkout kernel source
         uses: actions/checkout@v6
 
-      - name: Set up the toolchain
+      - name: Install build dependencies
         run: |
+          set -euxo pipefail
           sudo apt update
           sudo apt install -y --no-install-recommends \
             bc bison build-essential curl flex \
             g++-multilib gcc-multilib git gnupg \
             lib32readline-dev lib32z1-dev \
             libelf-dev liblz4-tool libssl-dev \
-            lzop zlib1g-dev pahole dwarves cpio zip \
-            python3 python-is-python3 tar perl lz4 jq
+            lzop zlib1g-dev pahole dwarves cpio zip unzip \
+            python3 python-is-python3 tar perl lz4 jq wget
 
-      - name: Download anykernel.zip
+      - name: Sanity-check q5q defconfig
         run: |
-          wget -q https://github.com/gyabii/kernel_samsung_sm8550-common/releases/download/anykernel/anykernel.zip
+          set -euxo pipefail
+          test -f "arch/arm64/configs/${KERNEL_DEFCONFIG}"
+          grep -q '^CONFIG_ARCH_KALAMA=y' "arch/arm64/configs/${KERNEL_DEFCONFIG}" || true
 
-      - name: Apply ReSukiSU with SuSFS
+      - name: Apply ReSukiSU + SuSFS config for q5q
         run: |
           set -euxo pipefail
 
-          # Determine the current kernel version
-          echo "KERNEL_VERSION=$(grep -m1 '^SUBLEVEL =' ./Makefile | awk '{print $3}')" >> $GITHUB_ENV
+          echo "KERNEL_VERSION=$(grep -m1 '^SUBLEVEL =' ./Makefile | awk '{print $3}')" >> "$GITHUB_ENV"
 
-          # Integrate ReSukiSU
-          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/refs/heads/main/kernel/setup.sh" | bash -s main
+          # ReSukiSU integration
+          curl -LSs "https://raw.githubusercontent.com/gyabii/ReSukiSU/refs/heads/${{ inputs.resukisu_branch }}/kernel/setup.sh" \
+            | bash -s "${{ inputs.resukisu_branch }}"
 
-          # Integrate SuSFS
-          git clone --depth=1 https://gitlab.com/gyabi/susfs4ksu.git -b gki-android13-5.15
+          # SuSFS integration for Android 13 / 5.15 GKI style kernels
+          git clone --depth=1 https://gitlab.com/gyabi/susfs4ksu.git -b "${{ inputs.susfs_branch }}"
 
           SUSFS_KERNEL_PATCH="susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch"
-          patch -p1 < "$SUSFS_KERNEL_PATCH"
+          patch -p1 -N --no-backup-if-mismatch < "$SUSFS_KERNEL_PATCH"
 
-          mkdir -p fs
-          mkdir -p include/linux
-
-          # Always replace fs/susfs.c
+          mkdir -p fs include/linux
           cp -f susfs4ksu/kernel_patches/fs/susfs.c fs/susfs.c
-
-          # Always replace include/linux/susfs.h
           cp -f susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/susfs.h
-
-          # Always replace include/linux/susfs_def.h
           cp -f susfs4ksu/kernel_patches/include/linux/susfs_def.h include/linux/susfs_def.h
-  
-          for f in fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h; do
-            if [ -f "$f" ]; then echo "Found: $f"; else echo "Missing: $f"; fi
-          done
-          
-          # Clean up SUSFS repo (we only needed kernel patches, not KSU integration)
           rm -rf susfs4ksu
 
-          CONFIG_FILE=arch/arm64/configs/q5q_defconfig
-          cat >> "$CONFIG_FILE" << 'EOF'
+          CONFIG_FILE="arch/arm64/configs/${KERNEL_DEFCONFIG}"
+
+          # Use scripts/config when available so reruns do not duplicate lines.
+          if [ -x scripts/config ]; then
+            ./scripts/config --file "$CONFIG_FILE" \
+              -e KSU \
+              -e KSU_SUSFS \
+              -e KSU_SUSFS_HAS_MAGIC_MOUNT \
+              -e KSU_SUSFS_SUS_PATH \
+              -e KSU_SUSFS_SUS_MOUNT \
+              -e KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
+              -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+              -e KSU_SUSFS_SUS_KSTAT \
+              -e KSU_SUSFS_SUS_OVERLAYFS \
+              -e KSU_SUSFS_TRY_UMOUNT \
+              -e KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
+              -e KSU_SUSFS_SPOOF_UNAME \
+              -e KSU_SUSFS_ENABLE_LOG \
+              -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+              -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+              -e KSU_SUSFS_OPEN_REDIRECT \
+              -e KSU_SUSFS_SUS_SU \
+              -e KPM
+          else
+            cat >> "$CONFIG_FILE" <<'EOF'
           CONFIG_KSU=y
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
@@ -81,48 +122,90 @@ jobs:
           CONFIG_KSU_SUSFS_SUS_SU=y
           CONFIG_KPM=y
           EOF
+          fi
 
-      - name: Set up swap space
+      - name: Add swap space
         uses: pierotofy/set-swap-space@master
         with:
           swap-size-gb: 16
 
-      - name: Build the kernel
+      - name: Build q5q kernel
         run: |
-          git config --global user.email "gyabii@proton.me"
-          git config --global user.name "gyabii"
+          set -euxo pipefail
           chmod +x scripts/build.sh
-          ./scripts/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
-          
-      - name: KPM patching
+          KERNEL_DEFCONFIG="${KERNEL_DEFCONFIG}" ./scripts/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Apply KPM patch to Image
         run: |
-          cd out/arch/arm64/boot
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU_patch/refs/heads/main/kpm/patch_linux" -o patch
-          chmod +x patch
-          gunzip -f Image.gz
-          ./patch Image
-          rm -rf Image
+          set -euxo pipefail
+          BOOT_DIR="$GITHUB_WORKSPACE/${OUT_DIR}/arch/arm64/boot"
+          cd "$BOOT_DIR"
+
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU_patch/refs/heads/main/kpm/patch_linux" -o patch_linux
+          chmod +x patch_linux
+
+          if [ -f Image.gz ]; then
+            gunzip -f Image.gz
+          fi
+
+          test -f Image
+          ./patch_linux Image
+          rm -f Image
           mv oImage Image
           gzip -f Image
 
-      - name: Package image with AnyKernel3
-        id: package
-        run: |
-          echo "DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
-          set -euxo pipefail
-          unzip "anykernel.zip" -d anykernel/
-          cp out/arch/arm64/boot/Image.gz anykernel/
-          # Build final name
-          ZIP_NAME="aosp-5.15.${KERNEL_VERSION}-gyabii_resukisu-kpm-susfs$(date +%d%m%y-%H%M%S)"
-          cd anykernel
-          zip -r0 ../"${ZIP_NAME}".zip ./*
-          echo "zip_path=$GITHUB_WORKSPACE/${ZIP_NAME}.zip" >> "$GITHUB_OUTPUT"
-          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
-          cd ..
-
-      - name: Upload the flashable kernel
+      - name: Upload raw Image.gz
         uses: actions/upload-artifact@v7
         with:
-          name: ${{steps.package.outputs.zip_name}}
-          path: anykernel/
-          
+          name: q5q-Image.gz-${{ github.run_number }}
+          path: out/arch/arm64/boot/Image.gz
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Package q5q AnyKernel zip
+        if: ${{ inputs.package_anykernel }}
+        id: package
+        run: |
+          set -euxo pipefail
+
+          wget -q "$ANYKERNEL_URL" -O anykernel.zip
+          rm -rf anykernel
+          unzip -q anykernel.zip -d anykernel
+
+          cp out/arch/arm64/boot/Image.gz anykernel/Image.gz
+
+          # Force q5q checks in anykernel.sh. This avoids accidentally flashing a dm1q-only zip.
+          if [ -f anykernel/anykernel.sh ]; then
+            sed -i 's/^do.devicecheck=.*/do.devicecheck=1/' anykernel/anykernel.sh || true
+            sed -i 's/^device.name1=.*/device.name1=q5q/' anykernel/anykernel.sh || true
+            sed -i 's/^device.name2=.*/device.name2=/' anykernel/anykernel.sh || true
+            sed -i 's/^device.name3=.*/device.name3=/' anykernel/anykernel.sh || true
+            sed -i 's|^BLOCK=.*|BLOCK=auto;|' anykernel/anykernel.sh || true
+            sed -i 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=auto;/' anykernel/anykernel.sh || true
+          else
+            echo "anykernel.sh missing from template" >&2
+            exit 1
+          fi
+
+          ZIP_NAME="q5q-aosp-5.15.${KERNEL_VERSION}-resukisu-kpm-susfs-$(date +%Y%m%d-%H%M%S)"
+          (cd anykernel && zip -r9 "../${ZIP_NAME}.zip" .)
+
+          echo "zip_path=$GITHUB_WORKSPACE/${ZIP_NAME}.zip" >> "$GITHUB_OUTPUT"
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload q5q flashable zip
+        if: ${{ inputs.package_anykernel }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package.outputs.zip_name }}
+          path: ${{ steps.package.outputs.zip_path }}
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: q5q-build-log-${{ github.run_number }}
+          path: build.log
+          if-no-files-found: warn
