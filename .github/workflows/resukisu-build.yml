@@ -44,7 +44,81 @@ jobs:
           git clone --depth=1 https://gitlab.com/gyabi/susfs4ksu.git -b gki-android13-5.15
 
           SUSFS_KERNEL_PATCH="susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch"
-          patch -p1 < "$SUSFS_KERNEL_PATCH"
+
+          # Current SUSFS has one known context mismatch against this
+          # Samsung/GKI 5.15.208 tree: hunk #1 in fs/namespace.c.
+          # Apply all matching hunks, repair only that known block, and
+          # fail if anything else is rejected.
+          set +e
+          patch -p1 --forward --fuzz=3 < "$SUSFS_KERNEL_PATCH"
+          SUSFS_PATCH_STATUS=$?
+          set -e
+
+          mapfile -t SUSFS_REJECTS < <(
+            find . -path './susfs4ksu' -prune -o -name '*.rej' -print | sort
+          )
+
+          if [ "$SUSFS_PATCH_STATUS" -ne 0 ]; then
+            if [ "${#SUSFS_REJECTS[@]}" -ne 1 ] || [ "${SUSFS_REJECTS[0]}" != "./fs/namespace.c.rej" ]; then
+              echo "Unexpected SUSFS patch failure."
+              printf 'Reject: %s\n' "${SUSFS_REJECTS[@]:-none}"
+              exit 1
+            fi
+          elif [ "${#SUSFS_REJECTS[@]}" -ne 0 ]; then
+            echo "SUSFS patch reported success but left reject files."
+            printf 'Reject: %s\n' "${SUSFS_REJECTS[@]}"
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("fs/namespace.c")
+          text = path.read_text()
+
+          include_anchor = "#include <linux/mnt_idmapping.h>\n"
+          include_block = (
+              "#include <linux/mnt_idmapping.h>\n\n"
+              "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+              "#include <linux/susfs_def.h>\n"
+              "#endif\n"
+          )
+
+          declarations_anchor = '#include "internal.h"\n'
+          declarations_block = (
+              '#include "internal.h"\n\n'
+              "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+              "extern bool susfs_is_current_ksu_domain(void);\n"
+              "extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;\n\n"
+              "#define CL_COPY_MNT_NS BIT(25)\n\n"
+              "#endif\n"
+          )
+
+          if "#include <linux/susfs_def.h>" not in text:
+              if include_anchor not in text:
+                  raise SystemExit("Missing namespace include anchor")
+              text = text.replace(include_anchor, include_block, 1)
+
+          if "#define CL_COPY_MNT_NS BIT(25)" not in text:
+              if declarations_anchor not in text:
+                  raise SystemExit("Missing namespace declarations anchor")
+              text = text.replace(declarations_anchor, declarations_block, 1)
+
+          path.write_text(text)
+          PY
+
+          rm -f fs/namespace.c.rej fs/namespace.c.orig
+
+          if find . -path './susfs4ksu' -prune -o -name '*.rej' -print | grep -q .; then
+            echo "Unexpected SUSFS reject files remain."
+            find . -path './susfs4ksu' -prune -o -name '*.rej' -print
+            exit 1
+          fi
+
+          grep -Fq '#include <linux/susfs_def.h>' fs/namespace.c
+          grep -Fq 'extern bool susfs_is_current_ksu_domain(void);' fs/namespace.c
+          grep -Fq 'extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;' fs/namespace.c
+          grep -Fq '#define CL_COPY_MNT_NS BIT(25)' fs/namespace.c
 
           mkdir -p fs include/linux
           cp -f susfs4ksu/kernel_patches/fs/susfs.c fs/susfs.c
