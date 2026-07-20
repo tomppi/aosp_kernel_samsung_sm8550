@@ -1132,6 +1132,16 @@ static int adsp_init_regulator(struct qcom_adsp *adsp)
 
 		adsp->regs[i].reg = devm_regulator_get(adsp->dev, reg_name);
 		if (IS_ERR(adsp->regs[i].reg)) {
+			rc = PTR_ERR(adsp->regs[i].reg);
+
+			/*
+			 * Sensor supplies can be provided by a PMIC which has not
+			 * finished probing yet. Do not mistake probe deferral for
+			 * an absent optional regulator.
+			 */
+			if (rc == -EPROBE_DEFER)
+				return dev_err_probe(adsp->dev, rc,
+						     "waiting for %s reg\n", reg_name);
 #if IS_ENABLED(CONFIG_SEC_SENSORS_SSC)
 			if (!strcmp(reg_name, SENSOR_SUPPLY_NAME) ||
 				!strcmp(reg_name, SUBSENSOR_SUPPLY_NAME) ||
