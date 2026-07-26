@@ -34,6 +34,7 @@ jobs:
           TARGET_BRANCH="agent/sync-exynoobs-lineage-23.2"
           UPSTREAM_URL="https://github.com/Exynoobs/android_kernel_samsung_sm8550.git"
           UPSTREAM_BRANCH="lineage-23.2"
+          WORKFLOW_PATH=".github/workflows/upstream-sync-orchestrator.yml"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -45,54 +46,70 @@ jobs:
 
           git checkout -B "$TARGET_BRANCH" origin/lineage-23.2
 
-          if git merge-base --is-ancestor "exynoobs/$UPSTREAM_BRANCH" HEAD; then
-            echo "Upstream is already contained in the prepared branch." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+          if ! git merge-base --is-ancestor "exynoobs/$UPSTREAM_BRANCH" HEAD; then
+            set +e
+            git merge --no-ff -X ours "exynoobs/$UPSTREAM_BRANCH" \
+              -m "Merge Exynoobs lineage-23.2 upstream"
+            merge_status=$?
+            set -e
+
+            if [ "$merge_status" -ne 0 ]; then
+              mapfile -d '' conflicts < <(git diff --name-only --diff-filter=U -z)
+
+              {
+                echo "## Paths whose local version was retained"
+                if [ "${#conflicts[@]}" -eq 0 ]; then
+                  echo "No unresolved paths were reported."
+                else
+                  printf -- '- `%s`\n' "${conflicts[@]}"
+                fi
+              } >> "$GITHUB_STEP_SUMMARY"
+
+              for path in "${conflicts[@]}"; do
+                if git checkout --ours -- "$path" 2>/dev/null; then
+                  git add -- "$path"
+                else
+                  git rm -f --ignore-unmatch -- "$path"
+                fi
+              done
+
+              if git diff --name-only --diff-filter=U | grep -q .; then
+                echo "Unresolved merge conflicts remain:" >&2
+                git diff --name-only --diff-filter=U >&2
+                exit 1
+              fi
+
+              git commit -m "Merge Exynoobs lineage-23.2 upstream"
+            fi
           fi
 
-          set +e
-          git merge --no-ff -X ours "exynoobs/$UPSTREAM_BRANCH" \
-            -m "Merge Exynoobs lineage-23.2 upstream"
-          merge_status=$?
-          set -e
+          MERGE_COMMIT="$(git rev-parse HEAD)"
+          LOCAL_PARENT="$(git rev-parse HEAD^1)"
+          UPSTREAM_PARENT="$(git rev-parse HEAD^2)"
+          CHANGED_FILES="$(git diff --name-only HEAD^1..HEAD | wc -l)"
 
-          if [ "$merge_status" -ne 0 ]; then
-            mapfile -d '' conflicts < <(git diff --name-only --diff-filter=U -z)
+          git rm -f --ignore-unmatch "$WORKFLOW_PATH"
+          if ! git diff --cached --quiet; then
+            git commit -m "Remove temporary upstream sync workflow"
+          fi
 
-            {
-              echo "## Paths whose local version was retained"
-              if [ "${#conflicts[@]}" -eq 0 ]; then
-                echo "No unresolved paths were reported."
-              else
-                printf -- '- `%s`\n' "${conflicts[@]}"
-              fi
-            } >> "$GITHUB_STEP_SUMMARY"
+          git push --force-with-lease origin \
+            "HEAD:refs/heads/$TARGET_BRANCH"
 
-            for path in "${conflicts[@]}"; do
-              if git checkout --ours -- "$path" 2>/dev/null; then
-                git add -- "$path"
-              else
-                git rm -f --ignore-unmatch -- "$path"
-              fi
-            done
-
-            if git diff --name-only --diff-filter=U | grep -q .; then
-              echo "Unresolved merge conflicts remain:" >&2
-              git diff --name-only --diff-filter=U >&2
-              exit 1
-            fi
-
-            git commit -m "Merge Exynoobs lineage-23.2 upstream"
+          git fetch --no-tags origin lineage-23.2
+          git checkout -B cleanup-sync-workflow origin/lineage-23.2
+          git rm -f --ignore-unmatch "$WORKFLOW_PATH"
+          if ! git diff --cached --quiet; then
+            git commit -m "Remove temporary upstream sync workflow"
+            git push origin HEAD:refs/heads/lineage-23.2
           fi
 
           {
             echo "## Prepared merge"
             echo
-            echo "- Local parent: $(git rev-parse HEAD^1)"
-            echo "- Exynoobs parent: $(git rev-parse HEAD^2)"
-            echo "- Merge commit: $(git rev-parse HEAD)"
-            echo "- Changed files against local parent: $(git diff --name-only HEAD^1..HEAD | wc -l)"
+            echo "- Local parent: $LOCAL_PARENT"
+            echo "- Exynoobs parent: $UPSTREAM_PARENT"
+            echo "- Merge commit: $MERGE_COMMIT"
+            echo "- Changed files against local parent: $CHANGED_FILES"
+            echo "- Temporary workflow removed from both branches."
           } >> "$GITHUB_STEP_SUMMARY"
-
-          git push --force-with-lease origin \
-            "HEAD:refs/heads/$TARGET_BRANCH"
