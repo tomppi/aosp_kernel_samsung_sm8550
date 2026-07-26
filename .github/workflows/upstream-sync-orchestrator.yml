@@ -1,0 +1,97 @@
+name: Prepare Exynoobs upstream merge
+
+on:
+  pull_request:
+    branches:
+      - lineage-23.2
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - edited
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-merge:
+    if: github.head_ref == 'agent/sync-exynoobs-lineage-23.2'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out full repository history
+        uses: actions/checkout@v4
+        with:
+          ref: lineage-23.2
+          fetch-depth: 0
+
+      - name: Merge Exynoobs lineage-23.2 into the sync branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TARGET_BRANCH="agent/sync-exynoobs-lineage-23.2"
+          UPSTREAM_URL="https://github.com/Exynoobs/android_kernel_samsung_sm8550.git"
+          UPSTREAM_BRANCH="lineage-23.2"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote remove exynoobs 2>/dev/null || true
+          git remote add exynoobs "$UPSTREAM_URL"
+          git fetch --no-tags exynoobs "$UPSTREAM_BRANCH"
+          git fetch --no-tags origin lineage-23.2 "$TARGET_BRANCH"
+
+          git checkout -B "$TARGET_BRANCH" origin/lineage-23.2
+
+          if git merge-base --is-ancestor "exynoobs/$UPSTREAM_BRANCH" HEAD; then
+            echo "Upstream is already contained in the prepared branch." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          set +e
+          git merge --no-ff -X ours "exynoobs/$UPSTREAM_BRANCH" \
+            -m "Merge Exynoobs lineage-23.2 upstream"
+          merge_status=$?
+          set -e
+
+          if [ "$merge_status" -ne 0 ]; then
+            mapfile -d '' conflicts < <(git diff --name-only --diff-filter=U -z)
+
+            {
+              echo "## Paths whose local version was retained"
+              if [ "${#conflicts[@]}" -eq 0 ]; then
+                echo "No unresolved paths were reported."
+              else
+                printf -- '- `%s`\n' "${conflicts[@]}"
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            for path in "${conflicts[@]}"; do
+              if git checkout --ours -- "$path" 2>/dev/null; then
+                git add -- "$path"
+              else
+                git rm -f --ignore-unmatch -- "$path"
+              fi
+            done
+
+            if git diff --name-only --diff-filter=U | grep -q .; then
+              echo "Unresolved merge conflicts remain:" >&2
+              git diff --name-only --diff-filter=U >&2
+              exit 1
+            fi
+
+            git commit -m "Merge Exynoobs lineage-23.2 upstream"
+          fi
+
+          {
+            echo "## Prepared merge"
+            echo
+            echo "- Local parent: $(git rev-parse HEAD^1)"
+            echo "- Exynoobs parent: $(git rev-parse HEAD^2)"
+            echo "- Merge commit: $(git rev-parse HEAD)"
+            echo "- Changed files against local parent: $(git diff --name-only HEAD^1..HEAD | wc -l)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          git push --force-with-lease origin \
+            "HEAD:refs/heads/$TARGET_BRANCH"
