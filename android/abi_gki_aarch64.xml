@@ -20386,7 +20386,7 @@
           <var-decl name='depends_on' type-id='f0981eeb' visibility='default' filepath='include/linux/cgroup-defs.h' line='709' column='1'/>
         </data-member>
       </class-decl>
-      <class-decl name='blk_flush_queue' size-in-bits='640' is-struct='yes' visibility='default' filepath='block/blk.h' line='20' column='1' id='1d120221'>
+      <class-decl name='blk_flush_queue' size-in-bits='640' is-struct='yes' visibility='default' filepath='block/partitions/../blk.h' line='20' column='1' id='1d120221'>
         <data-member access='public' layout-offset-in-bits='0'>
           <var-decl name='flush_pending_idx' type-id='f0981eeb' visibility='default' filepath='block/blk.h' line='21' column='1'/>
         </data-member>
@@ -122936,35 +122936,7 @@
         <return type-id='48b5725f'/>
       </function-type>
       <pointer-type-def type-id='22c4fd1a' size-in-bits='64' id='ec1a9290'/>
-      <class-decl name='disk_events' size-in-bits='1920' is-struct='yes' visibility='default' filepath='block/disk-events.c' line='10' column='1' id='ec1aac50'>
-        <data-member access='public' layout-offset-in-bits='0'>
-          <var-decl name='node' type-id='72f469ec' visibility='default' filepath='block/disk-events.c' line='11' column='1'/>
-        </data-member>
-        <data-member access='public' layout-offset-in-bits='128'>
-          <var-decl name='disk' type-id='33c599da' visibility='default' filepath='block/disk-events.c' line='12' column='1'/>
-        </data-member>
-        <data-member access='public' layout-offset-in-bits='192'>
-          <var-decl name='lock' type-id='fb4018a0' visibility='default' filepath='block/disk-events.c' line='13' column='1'/>
-        </data-member>
-        <data-member access='public' layout-offset-in-bits='256'>
-          <var-decl name='block_mutex' type-id='925167dc' visibility='default' filepath='block/disk-events.c' line='15' column='1'/>
-        </data-member>
-        <data-member access='public' layout-offset-in-bits='640'>
-          <var-decl name='block' type-id='95e97e5e' visibility='default' filepath='block/disk-events.c' line='16' column='1'/>
-        </data-member>
-        <data-member access='public' layout-offset-in-bits='672'>
-          <var-decl name='pending' type-id='f0981eeb' visibility='default' filepath='block/disk-events.c' line='17' column='1'/>
-        </data-member>
-        <data-member access='public' layout-offset-in-bits='704'>
-          <var-decl name='clearing' type-id='f0981eeb' visibility='default' filepath='block/disk-events.c' line='18' column='1'/>
-        </data-member>
-        <data-member access='public' layout-offset-in-bits='768'>
-          <var-decl name='poll_msecs' type-id='bd54fe1a' visibility='default' filepath='block/disk-events.c' line='20' column='1'/>
-        </data-member>
-        <data-member access='public' layout-offset-in-bits='832'>
-          <var-decl name='dwork' type-id='5ad6e0ef' visibility='default' filepath='block/disk-events.c' line='21' column='1'/>
-        </data-member>
-      </class-decl>
+      <class-decl name='disk_events' is-struct='yes' visibility='default' is-declaration-only='yes' id='ec1aac50'/>
       <pointer-type-def type-id='b9157ea1' size-in-bits='64' id='ec2076dd'/>
       <class-decl name='public_key_signature' size-in-bits='640' is-struct='yes' visibility='default' filepath='include/crypto/public_key.h' line='38' column='1' id='ec216e31'>
         <data-member access='public' layout-offset-in-bits='0'>
