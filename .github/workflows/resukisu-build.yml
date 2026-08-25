@@ -41,14 +41,16 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/refs/heads/main/kernel/setup.sh" | bash -s main
 
           # URL intentionally kept hardcoded.
-          git clone --depth=1 https://gitlab.com/gyabi/susfs4ksu.git -b gki-android13-5.15
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
 
           SUSFS_KERNEL_PATCH="susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch"
 
-          # Current SUSFS has one known context mismatch against this
-          # Samsung/GKI 5.15.208 tree: hunk #1 in fs/namespace.c.
-          # Apply all matching hunks, repair only that known block, and
-          # fail if anything else is rejected.
+          # SUSFS (canonical gitlab.com/simonpunk/susfs4ksu, branch
+          # gki-android13-5.15; tip 9623bd64 as of 2026-08-25) applies
+          # cleanly against this Samsung/GKI 5.15.208 tree, including
+          # under ReSukiSU.  Older patches had one known context mismatch
+          # in fs/namespace.c; the repair below is kept as a safety net
+          # for that same block and fails closed on anything else.
           set +e
           patch -p1 --forward --fuzz=3 < "$SUSFS_KERNEL_PATCH"
           SUSFS_PATCH_STATUS=$?
