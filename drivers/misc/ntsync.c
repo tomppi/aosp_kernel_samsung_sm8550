@@ -1218,7 +1218,7 @@ static void ntsync_fix_perms_worker(struct work_struct *work)
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,12,0)
              __vfs_setxattr_noperm(path.dentry, "security.selinux", ctx, strlen(ctx) + 1, 0);
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(6,3,0)
-            __vfs_setxattr_noperm(&init_user_ns, path.dentry, "security.selinux", ctx, strlen(ctx) + 1, 0);
+            vfs_setxattr(&init_user_ns, path.dentry, "security.selinux", ctx, strlen(ctx) + 1, 0);
 #else
             __vfs_setxattr_noperm(&nop_mnt_idmap, path.dentry, "security.selinux", ctx, strlen(ctx) + 1, 0);
 #endif
@@ -1270,3 +1270,4 @@ module_exit(ntsync_exit);
 MODULE_AUTHOR("Elizabeth Figura <zfigura@codeweavers.com>");
 MODULE_DESCRIPTION("Kernel driver for NT synchronization primitives");
 MODULE_LICENSE("GPL");
+MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
