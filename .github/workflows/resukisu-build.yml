@@ -234,6 +234,15 @@ jobs:
           if-no-files-found: warn
           compression-level: 0
 
+      - name: Upload ntsync module
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: q5q-ntsync.ko
+          path: out/drivers/misc/ntsync.ko
+          if-no-files-found: warn
+          compression-level: 0
+
       - name: Upload the flashable q5q kernel zip
         uses: actions/upload-artifact@v4
         with:
