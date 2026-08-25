@@ -62,6 +62,10 @@ build_kernel() {
   make -j"$(nproc --all)" O="$OUT_DIR" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 KCFLAGS="-Wno-error" \
     || err "Build failed"
 
+  # Build out-of-tree modules (obj-m), e.g. drivers/misc/ntsync.ko
+  make -j"$(nproc --all)" O="$OUT_DIR" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 KCFLAGS="-Wno-error" modules \
+    || err "Modules build failed"
+
   total=$(( $(date +%s) - START_TIME ))
   info "Build finished in $((total/60))m $((total%60))s."
 }
