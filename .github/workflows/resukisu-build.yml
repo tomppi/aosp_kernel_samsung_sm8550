@@ -157,6 +157,42 @@ jobs:
           CONFIG_KPM=y
           EOF
 
+      - name: Apply GoRhanHee BBRv3 + optimization patches (skip bbg)
+        run: |
+          set -euxo pipefail
+          BASE="https://raw.githubusercontent.com/GoRhanHee/android_kernel_samsung_sm8550/main/patches/common"
+          PATCHES="
+            bbrv3/0001-net-tcp-backport-BBRv3-to-android13-5.15.patch
+            optimization/0001-optimized-mem-operations.patch
+            optimization/0002-file-struct-8bytes-align.patch
+            optimization/0003-reduce-cache-pressure.patch
+            optimization/0004-mem-opt-prefetch.patch
+            optimization/0005-arm64-optimize-memcmp-sm8550-5.15.patch
+            optimization/0006-int-sqrt.patch
+            optimization/0007-reduce-gc-thread-sleep-time.patch
+            optimization/0008-alarmtimer-wakeup-timeout-sm8550-5.15.patch
+            optimization/0009-add-timeout-wakelocks-globally.patch
+            optimization/0010-f2fs-reduce-congestion.patch
+            optimization/0011-reduce-freeze-timeout.patch
+            optimization/0012-clear-page-16bytes-align.patch
+            optimization/0013-cpufreq-scaling-min-freq-limit-sm8550-5.15.patch
+            optimization/0014-adjust-cpu-scan-order.patch
+            optimization/0015-avoid-extra-s2idle-wake-attempts.patch
+            optimization/0016-disable-cache-hot-buddy.patch
+            optimization/0017-f2fs-enlarge-min-fsync-blocks.patch
+            optimization/0018-increase-ext4-default-commit-age.patch
+            optimization/0019-increase-sk-mem-packets-sm8550-5.15.patch
+            optimization/0020-reduce-pci-pme-wakeups-sm8550-5.15.patch
+            optimization/0021-silence-irq-cpu-logspam-sm8550-5.15.patch
+            optimization/0022-silence-system-logspam.patch
+          "
+          for P in $PATCHES; do
+            F="/tmp/$(basename "$P")"
+            curl -LSs "$BASE/$P" -o "$F" || { echo "download failed: $P"; exit 1; }
+            patch -p1 --forward --fuzz=3 < "$F" || { echo "apply failed: $P"; exit 1; }
+            echo "OK $P"
+          done
+
       - name: Set up swap space
         uses: pierotofy/set-swap-space@master
         with:
