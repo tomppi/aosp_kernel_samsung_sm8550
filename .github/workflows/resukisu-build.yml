@@ -1,0 +1,262 @@
+name: Build q5q kernel (ReSukiSU, KPM, SuSFS)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v4
+
+      - name: Set up the toolchain
+        run: |
+          set -euxo pipefail
+          sudo apt update
+          sudo apt install -y --no-install-recommends \
+            bc bison build-essential curl flex \
+            g++-multilib gcc-multilib git gnupg \
+            lib32readline-dev lib32z1-dev \
+            libelf-dev liblz4-tool libssl-dev \
+            lzop zlib1g-dev pahole dwarves cpio zip unzip wget \
+            python3 python-is-python3 tar perl lz4 jq
+
+      - name: Download anykernel.zip
+        run: |
+          set -euxo pipefail
+          wget -q https://github.com/gyabii/kernel_samsung_sm8550-common/releases/download/anykernel/anykernel.zip
+
+      - name: Apply ReSukiSU with SuSFS
+        run: |
+          set -euxo pipefail
+
+          echo "KERNEL_VERSION=$(grep -m1 '^SUBLEVEL =' ./Makefile | awk '{print $3}')" >> "$GITHUB_ENV"
+
+          # URL intentionally kept hardcoded.
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/refs/heads/main/kernel/setup.sh" | bash -s main
+
+          # URL intentionally kept hardcoded.
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
+
+          SUSFS_KERNEL_PATCH="susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch"
+
+          # SUSFS (canonical gitlab.com/simonpunk/susfs4ksu, branch
+          # gki-android13-5.15; tip 9623bd64 as of 2026-08-25) applies
+          # cleanly against this Samsung/GKI 5.15.208 tree, including
+          # under ReSukiSU.  Older patches had one known context mismatch
+          # in fs/namespace.c; the repair below is kept as a safety net
+          # for that same block and fails closed on anything else.
+          set +e
+          patch -p1 --forward --fuzz=3 < "$SUSFS_KERNEL_PATCH"
+          SUSFS_PATCH_STATUS=$?
+          set -e
+
+          mapfile -t SUSFS_REJECTS < <(
+            find . -path './susfs4ksu' -prune -o -name '*.rej' -print | sort
+          )
+
+          if [ "$SUSFS_PATCH_STATUS" -ne 0 ]; then
+            if [ "${#SUSFS_REJECTS[@]}" -ne 1 ] || [ "${SUSFS_REJECTS[0]}" != "./fs/namespace.c.rej" ]; then
+              echo "Unexpected SUSFS patch failure."
+              printf 'Reject: %s\n' "${SUSFS_REJECTS[@]:-none}"
+              exit 1
+            fi
+          elif [ "${#SUSFS_REJECTS[@]}" -ne 0 ]; then
+            echo "SUSFS patch reported success but left reject files."
+            printf 'Reject: %s\n' "${SUSFS_REJECTS[@]}"
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("fs/namespace.c")
+          text = path.read_text()
+
+          include_anchor = "#include <linux/mnt_idmapping.h>\n"
+          include_block = (
+              "#include <linux/mnt_idmapping.h>\n\n"
+              "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+              "#include <linux/susfs_def.h>\n"
+              "#endif\n"
+          )
+
+          declarations_anchor = '#include "internal.h"\n'
+          declarations_block = (
+              '#include "internal.h"\n\n'
+              "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+              "extern bool susfs_is_current_ksu_domain(void);\n"
+              "extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;\n\n"
+              "#define CL_COPY_MNT_NS BIT(25)\n\n"
+              "#endif\n"
+          )
+
+          if "#include <linux/susfs_def.h>" not in text:
+              if include_anchor not in text:
+                  raise SystemExit("Missing namespace include anchor")
+              text = text.replace(include_anchor, include_block, 1)
+
+          if "#define CL_COPY_MNT_NS BIT(25)" not in text:
+              if declarations_anchor not in text:
+                  raise SystemExit("Missing namespace declarations anchor")
+              text = text.replace(declarations_anchor, declarations_block, 1)
+
+          path.write_text(text)
+          PY
+
+          rm -f fs/namespace.c.rej fs/namespace.c.orig
+
+          if find . -path './susfs4ksu' -prune -o -name '*.rej' -print | grep -q .; then
+            echo "Unexpected SUSFS reject files remain."
+            find . -path './susfs4ksu' -prune -o -name '*.rej' -print
+            exit 1
+          fi
+
+          grep -Fq '#include <linux/susfs_def.h>' fs/namespace.c
+          grep -Fq 'extern bool susfs_is_current_ksu_domain(void);' fs/namespace.c
+          grep -Fq 'extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;' fs/namespace.c
+          grep -Fq '#define CL_COPY_MNT_NS BIT(25)' fs/namespace.c
+
+          mkdir -p fs include/linux
+          cp -f susfs4ksu/kernel_patches/fs/susfs.c fs/susfs.c
+          cp -f susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/susfs.h
+          cp -f susfs4ksu/kernel_patches/include/linux/susfs_def.h include/linux/susfs_def.h
+
+          for f in fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h; do
+            test -f "$f"
+            echo "Found: $f"
+          done
+
+          rm -rf susfs4ksu
+
+          CONFIG_FILE="arch/arm64/configs/q5q_defconfig"
+          test -f "$CONFIG_FILE"
+
+          cat >> "$CONFIG_FILE" << 'EOF'
+          CONFIG_KSU=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y
+          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          CONFIG_KSU_SUSFS_SUS_SU=y
+          CONFIG_KPM=y
+          EOF
+
+      - name: Set up swap space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 16
+
+      - name: Build the q5q kernel
+        run: |
+          set -euxo pipefail
+          git config --global user.email "gyabii@proton.me"
+          git config --global user.name "gyabii"
+          chmod +x scripts/build.sh
+          KERNEL_DEFCONFIG=q5q_defconfig ./scripts/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: KPM patching
+        run: |
+          set -euxo pipefail
+          cd out/arch/arm64/boot
+
+          # URL intentionally kept hardcoded.
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU_patch/refs/heads/main/kpm/patch_linux" -o patch
+          chmod +x patch
+
+          test -f Image.gz
+          gunzip -f Image.gz
+          test -f Image
+          ./patch Image
+          rm -f Image
+          mv oImage Image
+          gzip -f Image
+
+      - name: Package image with AnyKernel3
+        id: package
+        run: |
+          set -euxo pipefail
+
+          echo "DATE=$(date +%Y%m%d)" >> "$GITHUB_ENV"
+
+          unzip "anykernel.zip" -d anykernel/
+          cp out/arch/arm64/boot/Image.gz anykernel/
+
+          if [ -f anykernel/anykernel.sh ]; then
+            sed -i 's/^do.devicecheck=.*/do.devicecheck=1/' anykernel/anykernel.sh || true
+            sed -i 's/^device.name1=.*/device.name1=q5q/' anykernel/anykernel.sh || true
+            sed -i 's/^device.name2=.*/device.name2=/' anykernel/anykernel.sh || true
+            sed -i 's/^device.name3=.*/device.name3=/' anykernel/anykernel.sh || true
+            sed -i 's/^device.name4=.*/device.name4=/' anykernel/anykernel.sh || true
+            sed -i 's/^device.name5=.*/device.name5=/' anykernel/anykernel.sh || true
+            sed -i 's|^BLOCK=.*|BLOCK=auto;|' anykernel/anykernel.sh || true
+            sed -i 's/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=auto;/' anykernel/anykernel.sh || true
+
+            if ! grep -q '^device.name1=q5q' anykernel/anykernel.sh; then
+              printf '\n%s\n%s\n%s\n%s\n' \
+                'do.devicecheck=1' \
+                'device.name1=q5q' \
+                'BLOCK=auto;' \
+                'IS_SLOT_DEVICE=auto;' >> anykernel/anykernel.sh
+            fi
+          else
+            echo "anykernel.sh missing from template"
+            exit 1
+          fi
+
+          ZIP_NAME="q5q-aosp-5.15.${KERNEL_VERSION}-gyabii_resukisu-kpm-susfs-$(date +%d%m%y-%H%M%S)"
+          cd anykernel
+          zip -r0 "../${ZIP_NAME}.zip" ./*
+          echo "zip_path=$GITHUB_WORKSPACE/${ZIP_NAME}.zip" >> "$GITHUB_OUTPUT"
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+          cd ..
+
+      - name: Upload raw q5q Image.gz
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: q5q-resukisu-kpm-susfs-Image.gz
+          path: out/arch/arm64/boot/Image.gz
+          if-no-files-found: warn
+          compression-level: 0
+
+      - name: Upload ntsync module
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: q5q-ntsync.ko
+          path: out/drivers/misc/ntsync.ko
+          if-no-files-found: warn
+          compression-level: 0
+
+      - name: Upload the flashable q5q kernel zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.zip_name }}
+          path: ${{ steps.package.outputs.zip_path }}
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: q5q-resukisu-build-log
+          path: build.log
+          if-no-files-found: warn

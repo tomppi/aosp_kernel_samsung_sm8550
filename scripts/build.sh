@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Env-overridable.
+# Fold 5 / q5q adaptation: default to q5q_defconfig instead of dm1q_defconfig.
+KERNEL_DEFCONFIG=${KERNEL_DEFCONFIG:-q5q_defconfig}
+CLANG_VERSION=${CLANG_VERSION:-clang-r584948b}
+OUT_DIR=${OUT_DIR:-out}
+CLANG_DIR=${CLANG_DIR:-"$HOME/tools/google-clang"}
+CLANG_BINARY="$CLANG_DIR/bin/clang"
+START_TIME=$(date +%s)
+
+# Pretty logs.
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+info(){ echo -e "${GREEN}[INFO]${NC} $*"; }
+err(){ echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
+
+setup_clang() {
+  info "Fetching clang version $CLANG_VERSION..."
+  mkdir -p "$CLANG_DIR"
+
+  TARBALL="$(mktemp)"
+  URL_BASE="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive"
+  CLANG_URL="$URL_BASE/mirror-goog-main-llvm-toolchain-source/${CLANG_VERSION}.tar.gz"
+
+  if command -v wget >/dev/null 2>&1; then
+    DOWNLOAD_CLANG=(wget -q --show-progress -O "$TARBALL" "$CLANG_URL")
+  elif command -v curl >/dev/null 2>&1; then
+    DOWNLOAD_CLANG=(curl -L --fail -o "$TARBALL" "$CLANG_URL")
+  else
+    err "Need wget or curl to download the toolchain."
+  fi
+
+  "${DOWNLOAD_CLANG[@]}" >/dev/null 2>&1 || err "Download failed"
+
+  info "Extracting toolchain..."
+  tar -xzf "$TARBALL" -C "$CLANG_DIR"
+  rm -f "$TARBALL"
+
+  export PATH="$CLANG_DIR/bin:$PATH"
+
+  ver="$("$CLANG_BINARY" --version | head -n1)"
+  ver="$(echo "$ver" | sed -E 's/\(http[^)]*\)//g; s/[[:space:]]+/ /g; s/[[:space:]]+$//')"
+  export KBUILD_COMPILER_STRING="$ver"
+}
+
+build_kernel() {
+  info "Starting kernel build with ${KERNEL_DEFCONFIG}..."
+
+  test -f "arch/arm64/configs/${KERNEL_DEFCONFIG}" || err "Missing defconfig: arch/arm64/configs/${KERNEL_DEFCONFIG}"
+
+  setup_clang
+  mkdir -p "$OUT_DIR"
+
+  make -j"$(nproc --all)" O="$OUT_DIR" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 \
+    "$KERNEL_DEFCONFIG" || err "Defconfig failed"
+
+  make -j"$(nproc --all)" O="$OUT_DIR" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 KCFLAGS="-Wno-error" \
+    || err "Build failed"
+
+  # Build out-of-tree modules (obj-m), e.g. drivers/misc/ntsync.ko
+  make -j"$(nproc --all)" O="$OUT_DIR" ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 KCFLAGS="-Wno-error" modules \
+    || err "Modules build failed"
+
+  total=$(( $(date +%s) - START_TIME ))
+  info "Build finished in $((total/60))m $((total%60))s."
+}
+
+# Always build.
+build_kernel
