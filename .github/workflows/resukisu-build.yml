@@ -295,3 +295,15 @@ jobs:
           name: q5q-resukisu-build-log
           path: build.log
           if-no-files-found: warn
+
+      # The sensor factory driver is a module, and the ALS fold fix lives in it.
+      # Uploading it lets the change be tested through a KernelSU overlay before
+      # anything is flashed.
+      - name: Upload adsp_factory_module.ko (ALS fold fix)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: q5q-adsp_factory_module.ko
+          path: out/drivers/adsp_factory/adsp_factory_module.ko
+          if-no-files-found: error
+          compression-level: 0
