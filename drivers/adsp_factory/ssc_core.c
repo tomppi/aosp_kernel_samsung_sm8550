@@ -632,6 +632,29 @@ void ssc_flip_work_func(struct work_struct *work)
 	adsp_unicast(msg_buf, sizeof(msg_buf),
 			MSG_VIR_OPTIC, 0, MSG_TYPE_OPTION_DEFINE);
 #endif
+	/*
+	 * light_factory.c:82 selects the ALS channel from data->fac_fstate, and
+	 * the hub re-routes that channel only on VOPTIC_OP_CMD_FAC_FLIP - the
+	 * command fac_fstate_store() sends for a manual write. The SSC_FLIP
+	 * notification above does not re-route it, so on q5q the ALS channel
+	 * stayed where it was across folds: four measured folds changed nothing,
+	 * the pinned channel reported 1 lux in a lit room and the framework drove
+	 * the panel to backlight 17/765. Send the factory command as well.
+	 *
+	 * curr_fstate: 0 = open, 1 = close (hall_ic.c:340 "state ? close : open"),
+	 * and get_light_sidx() maps INACTIVE(0)/FAC_INACTIVE(2) to MSG_LIGHT,
+	 * ACTIVE(1)/FAC_ACTIVE(3)/FAC_INACTIVE_2(4) to MSG_LIGHT_SUB.
+	 */
+	{
+		int32_t fstate[2] = {
+			VOPTIC_OP_CMD_FAC_FLIP,
+			(curr_fstate == 0) ? FSTATE_FAC_INACTIVE
+					   : FSTATE_FAC_ACTIVE,
+		};
+
+		adsp_unicast(fstate, sizeof(fstate), MSG_VIR_OPTIC, 0,
+			     MSG_TYPE_OPTION_DEFINE);
+	}
 #else
 	msg_buf[0] = 11;
 	msg_buf[1] = (int32_t)curr_fstate;
