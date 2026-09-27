@@ -154,7 +154,6 @@ jobs:
           CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
           CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
           CONFIG_KSU_SUSFS_SUS_SU=y
-          CONFIG_KPM=y
           EOF
 
       - name: Apply GoRhanHee BBRv3 + optimization patches (skip bbg)
@@ -205,23 +204,6 @@ jobs:
           git config --global user.name "gyabii"
           chmod +x scripts/build.sh
           KERNEL_DEFCONFIG=q5q_defconfig ./scripts/build.sh 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
-
-      - name: KPM patching
-        run: |
-          set -euxo pipefail
-          cd out/arch/arm64/boot
-
-          # URL intentionally kept hardcoded.
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU_patch/refs/heads/main/kpm/patch_linux" -o patch
-          chmod +x patch
-
-          test -f Image.gz
-          gunzip -f Image.gz
-          test -f Image
-          ./patch Image
-          rm -f Image
-          mv oImage Image
-          gzip -f Image
 
       - name: Package image with AnyKernel3
         id: package
